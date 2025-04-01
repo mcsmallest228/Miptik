@@ -1,0 +1,12 @@
+version: '3.8'
+
+services:
+  pdf-bot:
+    build: .
+    container_name: pdf-bot
+    restart: unless-stopped
+    volumes:
+      - ./processed_pdfs:/app/processed_pdfs
+      - ./pdf_bot.db:/app/pdf_bot.db
+    environment:
+      - TOKEN=8013070807:AAFwDMOWX1qI11rPAbADZvaxx_5YahIGr_U  # Замените на реальный токен

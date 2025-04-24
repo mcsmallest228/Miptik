@@ -285,7 +285,7 @@ async def handle_settings(update: Update, context: CallbackContext):
         )
     elif query.data == "back_to_main":
         await query.edit_message_text(
-            "✅ Настройки сохранены!",
+            "✅ Настройки сохранены! Нажмите превью чтобы посмотреть",
             reply_markup=get_payment_keyboard(query.from_user.id)
         )
     elif query.data == "send_preview":
@@ -354,7 +354,7 @@ async def handle_payment(update: Update, context: CallbackContext):
         else:
             conn.close()
             await query.edit_message_text(
-                f"❌ Недостаточно Stars. Нужно {PRICE}, у вас {balance}",
+                f"❌ Недостаточно Stars. Нужно {PRICE}, у вас {balance}, пополните баналс (1 рубль=1 STAR",
                 reply_markup=get_payment_keyboard(user_id)
             )
     elif query.data == "add_stars":
@@ -375,7 +375,7 @@ async def handle_payment(update: Update, context: CallbackContext):
         conn = sqlite3.connect(DB_NAME)
         balance = conn.execute("SELECT balance FROM users WHERE user_id = ?", (query.from_user.id,)).fetchone()[0]
         conn.close()
-        await query.answer(f"Ваш баланс: {balance} Stars", show_alert=True)
+        await query.answer(f"Ваш баланс: {balance} Stars (РУБ)", show_alert=True)
     elif query.data == "open_settings":
         await query.edit_message_text(
             "⚙️ Настройки обработки:",

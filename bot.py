@@ -174,10 +174,10 @@ def get_payment_keyboard(user_id):
     conn.close()
 
     buttons = [
-        [InlineKeyboardButton(f"⭐ Купить полную версию ({PRICE} Stars)", callback_data="buy_full")],
-        [InlineKeyboardButton(f"💎 Пополнить (+{STARS_ADD_AMOUNT} Stars)", callback_data="add_stars")],
+        [InlineKeyboardButton(f"⭐ Купить полную версию ( {PRICE} Stars = {PRICE} РУБ)", callback_data="buy_full")],
+        [InlineKeyboardButton(f"💎 Пополнить (+{STARS_ADD_AMOUNT} Stars = +{STARS_ADD_AMOUNT} РУБ)", callback_data="add_stars")],
         [InlineKeyboardButton("⚙️ Настройки", callback_data="open_settings")],
-        [InlineKeyboardButton(f"💰 Баланс: {balance} Stars", callback_data="show_balance")]
+        [InlineKeyboardButton(f"💰 Баланс: {balance} Stars(РУБ)", callback_data="show_balance")]
     ]
 
     return InlineKeyboardMarkup(buttons)

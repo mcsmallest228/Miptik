@@ -332,7 +332,7 @@ async def handle_payment(update: Update, context: CallbackContext):
                 )
                 await context.bot.send_message(
                     chat_id=user_id,
-                    text="Напиши мне 'привет', если еще раз понадоблюсь!"
+                    text="Напиши мне '/start', если еще раз понадоблюсь!"
                 )
 
             except Exception as e:

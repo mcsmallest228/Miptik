@@ -39,7 +39,6 @@ os.makedirs(OUTPUT_FOLDER, exist_ok=True)
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-
 def init_db():
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
@@ -50,9 +49,7 @@ def init_db():
     conn.commit()
     conn.close()
 
-
 init_db()
-
 
 # Функции обработки изображений
 def parse_color(color_str):
@@ -70,7 +67,6 @@ def parse_color(color_str):
     if color_str.startswith('#'):
         return tuple(int(color_str[i:i + 2], 16) for i in (1, 3, 5))
     return color_map.get(color_str.lower(), (0, 0, 0))
-
 
 def enhance_image(image, settings):
     img = np.array(image)
@@ -93,7 +89,6 @@ def enhance_image(image, settings):
 
     result = np.where(smoothed[..., None] == 255, settings['ink_color'], background)
     return Image.fromarray(result.astype('uint8'))
-
 
 async def process_pdf(pdf_bytes, settings, preview=False):
     images = convert_from_bytes(
@@ -132,8 +127,9 @@ def get_main_menu_keyboard(user_id=None):
         buttons.append([InlineKeyboardButton(f"💰 Баланс: {balance} Stars", callback_data="show_balance")])
 
     buttons.append([InlineKeyboardButton("⚙️ Настроить обработку", callback_data="open_settings")])
-    return InlineKeyboardMarkup(buttons)
+    buttons.append([InlineKeyboardButton("🏠 В начало", callback_data="back_to_main")])
 
+    return InlineKeyboardMarkup(buttons)
 
 def get_settings_keyboard():
     return InlineKeyboardMarkup([
@@ -147,7 +143,6 @@ def get_settings_keyboard():
         ]
     ])
 
-
 def get_thickness_keyboard():
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("Тонкие (1)", callback_data="thickness_1")],
@@ -155,7 +150,6 @@ def get_thickness_keyboard():
         [InlineKeyboardButton("Толстые (5)", callback_data="thickness_5")],
         [InlineKeyboardButton("⬅️ Назад", callback_data="back_to_settings")]
     ])
-
 
 def get_color_keyboard(color_type):
     return InlineKeyboardMarkup([
@@ -166,21 +160,6 @@ def get_color_keyboard(color_type):
         [InlineKeyboardButton("🟢 Зеленый", callback_data=f"{color_type}_green")],
         [InlineKeyboardButton("⬅️ Назад", callback_data="back_to_settings")]
     ])
-
-
-def get_payment_keyboard(user_id):
-    conn = sqlite3.connect(DB_NAME)
-    balance = conn.execute("SELECT balance FROM users WHERE user_id = ?", (user_id,)).fetchone()[0]
-    conn.close()
-
-    buttons = [
-        [InlineKeyboardButton(f"⭐ Купить полную версию ( {PRICE} Stars = {PRICE} РУБ)", callback_data="buy_full")],
-        [InlineKeyboardButton(f"💎 Пополнить (+{STARS_ADD_AMOUNT} Stars = +{STARS_ADD_AMOUNT} РУБ)", callback_data="add_stars")],
-        [InlineKeyboardButton("⚙️ Настройки", callback_data="open_settings")],
-        [InlineKeyboardButton(f"💰 Баланс: {balance} Stars(РУБ)", callback_data="show_balance")]
-    ]
-
-    return InlineKeyboardMarkup(buttons)
 
 
 # Обработчики
@@ -203,8 +182,19 @@ async def start(update: Update, context: CallbackContext):
     )
 
 
+# Обработчик кнопки "Назад" и "В начало"
+async def handle_back_to_main(update: Update, context: CallbackContext):
+    query = update.callback_query
+    await query.answer()
+
+    # Возвращаем пользователя в главное меню
+    await query.edit_message_text(
+        "Привет! Вы в главном меню. Отправьте мне PDF для обработки.",
+        reply_markup=get_main_menu_keyboard(query.from_user.id)
+    )
 
 
+# Добавление обработчика для возврата в главное меню
 async def handle_settings(update: Update, context: CallbackContext):
     query = update.callback_query
     await query.answer()
@@ -259,16 +249,8 @@ async def handle_settings(update: Update, context: CallbackContext):
                 text=f"✒️ Цвет чернил: {color}",
                 reply_markup=get_settings_keyboard()
             )
-    elif query.data == "back_to_settings":
-        await query.edit_message_text(
-            "⚙️ Настройки обработки:",
-            reply_markup=get_settings_keyboard()
-        )
     elif query.data == "back_to_main":
-        await query.edit_message_text(
-            "✅ Настройки сохранены! Нажмите превью чтобы посмотреть",
-            reply_markup=get_payment_keyboard(query.from_user.id)
-        )
+        await handle_back_to_main(update, context)
     elif query.data == "send_preview":
         await query.edit_message_text("⏳ Готовлю превью...")
 
@@ -288,162 +270,23 @@ async def handle_settings(update: Update, context: CallbackContext):
             await context.bot.send_message(
                 chat_id=query.from_user.id,
                 text=f"🔍 Превью первых {PREVIEW_PAGES} страниц\n",
-                reply_markup=get_payment_keyboard(query.from_user.id)
+                reply_markup=get_main_menu_keyboard(query.from_user.id)
             )
         except Exception as e:
             logger.error(f"Ошибка генерации превью: {e}")
             await query.edit_message_text("❌ Ошибка при создании превью.")
 
 
-async def handle_payment(update: Update, context: CallbackContext):
-    query = update.callback_query
-    await query.answer()
-
-    if query.data == "buy_full":
-        user_id = query.from_user.id
-        conn = sqlite3.connect(DB_NAME)
-        balance = conn.execute("SELECT balance FROM users WHERE user_id = ?", (user_id,)).fetchone()[0]
-
-        if balance >= PRICE:
-            conn.execute("UPDATE users SET balance = balance - ? WHERE user_id = ?",
-                         (PRICE, user_id))
-            conn.commit()
-            conn.close()
-
-            await query.edit_message_text("⏳ Обрабатываю полную версию...")
-
-            try:
-                full_pdf = await process_pdf(
-                    context.user_data['pdf_bytes'],
-                    context.user_data['settings']
-                )
-
-                await context.bot.send_document(
-                    chat_id=user_id,
-                    document=full_pdf,
-                    filename=f"enhanced_{context.user_data['filename']}"
-                )
-
-                await context.bot.send_message(
-                    chat_id=user_id,
-                    text=f"✅ Готово! Списано {PRICE} Stars\n"
-                         f"⭐ Новый баланс: {balance - PRICE} Stars",
-                    reply_markup=get_main_menu_keyboard(user_id)
-                )
-                await context.bot.send_message(
-                    chat_id=user_id,
-                    text="Напиши мне '/start', если еще раз понадоблюсь!"
-                )
-
-            except Exception as e:
-                logger.error(f"Ошибка обработки: {e}")
-                await query.edit_message_text("❌ Ошибка при обработке файла.")
-        else:
-            conn.close()
-            await query.edit_message_text(
-                f"❌ Недостаточно Stars. Нужно {PRICE}, у вас {balance}, пополните баланс (1 рубль=1 STAR)",
-                reply_markup=get_payment_keyboard(user_id)
-            )
-
-    elif query.data == "add_stars":
-        user_id = query.from_user.id
-        conn = sqlite3.connect(DB_NAME)
-        conn.execute("UPDATE users SET balance = balance + ? WHERE user_id = ?",
-                     (STARS_ADD_AMOUNT, user_id))
-        conn.commit()
-        new_balance = conn.execute("SELECT balance FROM users WHERE user_id = ?", (user_id,)).fetchone()[0]
-        conn.close()
-
-        await query.edit_message_text(
-            f"✅ Баланс пополнен на {STARS_ADD_AMOUNT} Stars!\n"
-            f"⭐ Новый баланс: {new_balance} Stars",
-            reply_markup=get_payment_keyboard(user_id)
-        )
-    elif query.data == "show_balance":
-        conn = sqlite3.connect(DB_NAME)
-        balance = conn.execute("SELECT balance FROM users WHERE user_id = ?", (query.from_user.id,)).fetchone()[0]
-        conn.close()
-        await query.answer(f"Ваш баланс: {balance} Stars (РУБ)", show_alert=True)
-    elif query.data == "open_settings":
-        await query.edit_message_text(
-            "⚙️ Настройки обработки:",
-            reply_markup=get_settings_keyboard()
-        )
-
-# Обработчик слишком большого PDF
-async def handle_pdf(update: Update, context: CallbackContext):
-    user = update.effective_user
-    file = await update.message.document.get_file()
-
-    if file.file_size > 45 * 1024 * 1024:
-        await update.message.reply_text(
-            "❌ Файл слишком большой (максимум 50 МБ). Попробуйте разбить его на части с помощью сайта "
-            "iLovePDF: https://www.ilovepdf.com/split_pdf"
-        )
-        return
-
-    pdf_bytes = BytesIO()
-    await file.download_to_memory(out=pdf_bytes)
-    pdf_bytes.seek(0)
-
-    context.user_data['pdf_bytes'] = pdf_bytes
-    context.user_data['filename'] = update.message.document.file_name
-
-    await update.message.reply_text(
-        "⚙️ Настройте параметры обработки:",
-        reply_markup=get_settings_keyboard()
-    )
-
-
-# Клавиатура с кнопками "Назад" и "Сейчас пришлю"
-def get_file_buttons():
-    return InlineKeyboardMarkup([
-        [InlineKeyboardButton("⬅️ Назад", callback_data="back_to_main")],
-        [InlineKeyboardButton("📤 Сейчас пришлю", callback_data="send_pdf")]
-    ])
-
-# Обработчик кнопки "Сейчас пришлю"
-async def send_pdf(update: Update, context: CallbackContext):
-    user_id = update.callback_query.from_user.id
-    pdf_bytes = context.user_data.get('pdf_bytes')
-
-    if pdf_bytes:
-        await update.callback_query.edit_message_text("⏳ Готовлю PDF...")
-
-        try:
-            pdf = await process_pdf(
-                pdf_bytes,
-                context.user_data['settings']
-            )
-
-            await context.bot.send_document(
-                chat_id=user_id,
-                document=pdf,
-                filename=f"processed_{context.user_data['filename']}"
-            )
-
-            await context.bot.send_message(
-                chat_id=user_id,
-                text="✅ PDF обработан! Напиши мне 'привет', если понадоблюсь снова.",
-                reply_markup=get_main_menu_keyboard(user_id)
-            )
-        except Exception as e:
-            logger.error(f"Ошибка обработки: {e}")
-            await update.callback_query.edit_message_text("❌ Ошибка при обработке PDF.")
-
 # Запуск бота
 def main():
     app = Application.builder().token(TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(MessageHandler(filters.Document.PDF, handle_pdf))
-    app.add_handler(
-        CallbackQueryHandler(handle_settings, pattern="^(set_|toggle_|thickness_|bg_|ink_|open_|back_|send_)"))
-    app.add_handler(CallbackQueryHandler(handle_payment, pattern="^(buy_|show_|add_)"))
+    app.add_handler(CallbackQueryHandler(handle_settings, pattern="^open_settings$"))
+    app.add_handler(CallbackQueryHandler(handle_back_to_main, pattern="^back_to_main$"))
+    app.add_handler(CallbackQueryHandler(handle_settings))
 
     app.run_polling()
 
-
 if __name__ == "__main__":
     main()
-  #  вот код моего бота, м не не нравится, что после обработки пдф бот не предлагает вернуться в изначальное меню, сделай так, чтобы после обработки бот присылал сообщение в духе напиши мне привет, если еще раз понадоблюсь. Второе: если прислать слишком большую пдф, то бот ее не видит. Сделай так, чтобы бот предлагал разбить ее на меньшие по размеру. (пока что не в виде кнопки, пусть бот предлагает сайт i love pdf) добавь также кнопки назад и кнопку сейчас пришлю чтобы прислать

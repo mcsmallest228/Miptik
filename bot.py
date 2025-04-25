@@ -18,13 +18,11 @@ from io import BytesIO
 import tempfile
 
 # Настройки
-TOKEN = "8013070807:AAFwDMOWX1qI11rPAbADZvaxx_5YahIGr_U"
+TOKEN = "YOUR_TELEGRAM_BOT_TOKEN"
 DB_NAME = "pdf_bot.db"
-OUTPUT_FOLDER = "processed_pdfs"
+MAX_FILE_SIZE = 50 * 1024 * 1024  # 50 MB
 PREVIEW_PAGES = 5
 PRICE = 100  # Стоимость полной версии в Stars
-STARS_ADD_AMOUNT = 100  # Количество Stars за пополнение
-
 
 # Параметры обработки по умолчанию
 DEFAULT_SETTINGS = {
@@ -67,24 +65,13 @@ def update_user_balance(user_id: int, amount: int):
 def process_image_page(img: Image, settings: dict) -> Image:
     """Обработка одной страницы изображения"""
     img_np = np.array(img)
-
-    # Конвертация в оттенки серого
     gray = cv2.cvtColor(img_np, cv2.COLOR_RGB2GRAY)
-
-    # Улучшение контраста
     enhanced = cv2.convertScaleAbs(gray, alpha=settings['contrast'], beta=0)
-
-    # Бинаризация
     _, binary = cv2.threshold(enhanced, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
-
-    # Утолщение текста
     kernel = np.ones((settings['thickness'], settings['thickness']), np.uint8)
     processed = cv2.dilate(binary, kernel, iterations=1)
-
-    # Создание результата
     result = np.full_like(img_np, settings['bg_color'])
     result[processed == 255] = settings['ink_color']
-
     return Image.fromarray(result)
 
 
@@ -93,102 +80,49 @@ async def process_pdf_file(pdf_bytes: BytesIO, settings: dict, pages: int = None
     with tempfile.NamedTemporaryFile(suffix=".pdf") as temp_pdf:
         temp_pdf.write(pdf_bytes.getvalue())
         temp_pdf.flush()
-
-        images = convert_from_bytes(
-            pdf_bytes.getvalue(),
-            first_page=1,
-            last_page=pages,
-            fmt='jpeg'
-        )
+        images = convert_from_bytes(pdf_bytes.getvalue(), first_page=1, last_page=pages, fmt='jpeg')
 
     processed_images = [process_image_page(img, settings) for img in images]
-
     output = BytesIO()
     if len(processed_images) > 1:
-        processed_images[0].save(
-            output, format="PDF",
-            save_all=True,
-            append_images=processed_images[1:],
-            quality=100
-        )
+        processed_images[0].save(output, format="PDF", save_all=True, append_images=processed_images[1:], quality=100)
     else:
         processed_images[0].save(output, format="PDF", quality=100)
-
     output.seek(0)
     return output
 
 
-# Клавиатуры
-def main_menu_keyboard(user_id: int) -> InlineKeyboardMarkup:
-    """Главное меню"""
-    balance = get_user_balance(user_id)
-    buttons = [
-        [InlineKeyboardButton(f"💰 Баланс: {balance} Stars", callback_data="balance")],
-        [InlineKeyboardButton("⚙️ Настройки", callback_data="settings")],
-        [InlineKeyboardButton("🆘 Помощь", callback_data="help")]
-    ]
-    return InlineKeyboardMarkup(buttons)
+def get_start_processing_keyboard() -> InlineKeyboardMarkup:
+    """Клавиатура с кнопкой 'Начать обработку'"""
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("🔄 Начать обработку", callback_data="start_processing")],
+        [InlineKeyboardButton("⚙️ Настройки", callback_data="settings")]
+    ])
 
 
-def settings_keyboard() -> InlineKeyboardMarkup:
-    """Меню настроек"""
-    buttons = [
-        [InlineKeyboardButton("🔢 Толщина линий", callback_data="set_thickness")],
-        [InlineKeyboardButton("🎨 Цвет фона", callback_data="set_bg_color")],
-        [InlineKeyboardButton("✒️ Цвет текста", callback_data="set_text_color")],
-        [InlineKeyboardButton("⬅️ Назад", callback_data="back_to_main")]
-    ]
-    return InlineKeyboardMarkup(buttons)
-
-
-def thickness_keyboard() -> InlineKeyboardMarkup:
-    """Выбор толщины линий"""
-    buttons = [
-        [InlineKeyboardButton("Тонкие (1)", callback_data="thickness_1")],
-        [InlineKeyboardButton("Средние (2)", callback_data="thickness_2")],
-        [InlineKeyboardButton("Толстые (3)", callback_data="thickness_3")],
-        [InlineKeyboardButton("⬅️ Назад", callback_data="back_to_settings")]
-    ]
-    return InlineKeyboardMarkup(buttons)
-
-
-def color_keyboard(color_type: str) -> InlineKeyboardMarkup:
-    """Выбор цвета"""
-    buttons = [
-        [InlineKeyboardButton("⚪ Белый", callback_data=f"{color_type}_white")],
-        [InlineKeyboardButton("⚫ Черный", callback_data=f"{color_type}_black")],
-        [InlineKeyboardButton("🔵 Синий", callback_data=f"{color_type}_blue")],
-        [InlineKeyboardButton("🔴 Красный", callback_data=f"{color_type}_red")],
-        [InlineKeyboardButton("⬅️ Назад", callback_data="back_to_settings")]
-    ]
-    return InlineKeyboardMarkup(buttons)
-
-
-def payment_keyboard(user_id: int) -> InlineKeyboardMarkup:
-    """Меню оплаты"""
-    balance = get_user_balance(user_id)
-    buttons = [
-        [InlineKeyboardButton(f"⭐ Купить полную версию ({PRICE} Stars)", callback_data="buy_full")],
-        [InlineKeyboardButton(f"💎 Пополнить баланс (+100 Stars)", callback_data="add_stars")],
-        [InlineKeyboardButton("⬅️ Назад", callback_data="back_to_main")]
-    ]
-    return InlineKeyboardMarkup(buttons)
-
-
-# Обработчики сообщений
 async def start(update: Update, context: CallbackContext):
     """Обработчик команды /start"""
     user = update.effective_user
-    update_user_balance(user.id, 0)  # Инициализация пользователя
+    update_user_balance(user.id, 0)
 
-    await update.message.reply_text(
-        f"👋 Привет, {user.first_name}!\n\n"
-        "Я помогу улучшить качество рукописного текста в ваших PDF.\n\n"
-        f"• Бесплатно: превью первых {PREVIEW_PAGES} страниц\n"
-        f"• Полная версия: {PRICE} Stars\n\n"
-        "Просто отправьте мне PDF файл или выберите действие:",
-        reply_markup=main_menu_keyboard(user.id)
-    )
+    if 'pdf' in context.user_data:
+        # Если есть сохраненный PDF, предлагаем начать обработку
+        await update.message.reply_text(
+            "У вас есть загруженный PDF файл. Хотите начать обработку?",
+            reply_markup=get_start_processing_keyboard()
+        )
+    else:
+        # Стандартное приветствие
+        await update.message.reply_text(
+            f"👋 Привет, {user.first_name}!\n\n"
+            "Отправьте мне PDF файл с рукописным текстом для улучшения качества.\n\n"
+            f"• Бесплатно: превью первых {PREVIEW_PAGES} страниц\n"
+            f"• Полная версия: {PRICE} Stars",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("💰 Баланс", callback_data="balance")],
+                [InlineKeyboardButton("🆘 Помощь", callback_data="help")]
+            ])
+        )
 
 
 async def handle_document(update: Update, context: CallbackContext):
@@ -203,7 +137,9 @@ async def handle_document(update: Update, context: CallbackContext):
             "• Онлайн-сервиса: https://www.ilovepdf.com/split_pdf\n"
             "• Или программы: Adobe Acrobat, PDFsam\n\n"
             "После разбивки отправьте мне файлы по одному.",
-            reply_markup=main_menu_keyboard(user.id)
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("🔄 Попробовать снова", callback_data="start")]
+            ])
         )
         return
 
@@ -214,185 +150,211 @@ async def handle_document(update: Update, context: CallbackContext):
     context.user_data['pdf'] = pdf_bytes
     context.user_data['filename'] = document.file_name
 
+    # Предлагаем начать обработку
     await update.message.reply_text(
-        "Файл получен! Выберите действие:",
-        reply_markup=InlineKeyboardMarkup([
-            [InlineKeyboardButton("👀 Превью (бесплатно)", callback_data="preview")],
-            [InlineKeyboardButton("⚙️ Настройки", callback_data="settings")],
-            [InlineKeyboardButton("💰 Баланс", callback_data="balance")]
-        ])
+        "✅ PDF файл успешно загружен!\n"
+        "Нажмите кнопку ниже чтобы начать обработку:",
+        reply_markup=get_start_processing_keyboard()
     )
 
 
-async def button_handler(update: Update, context: CallbackContext):
-    """Обработчик нажатий на кнопки"""
+async def start_processing(update: Update, context: CallbackContext):
+    """Начало обработки PDF"""
     query = update.callback_query
     await query.answer()
     user_id = query.from_user.id
 
-    if query.data == "settings":
+    if 'pdf' not in context.user_data:
         await query.edit_message_text(
-            "⚙️ Настройки обработки:",
-            reply_markup=settings_keyboard())
+            "❌ Файл не найден. Пожалуйста, отправьте PDF снова.",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("🔄 Попробовать снова", callback_data="start")]
+            )
+        )
+        return
 
-    elif query.data == "balance":
+    await query.edit_message_text("⏳ Начинаю обработку...")
+
+    try:
+        # Сначала делаем превью
+        preview_pdf = await process_pdf_file(
+            context.user_data['pdf'],
+            DEFAULT_SETTINGS,
+            PREVIEW_PAGES
+        )
+
+        await context.bot.send_document(
+            chat_id=user_id,
+            document=preview_pdf,
+            filename=f"preview_{context.user_data['filename']}"
+        )
+
+        # Затем предлагаем полную версию
         balance = get_user_balance(user_id)
         await query.edit_message_text(
-            f"💰 Ваш баланс: {balance} Stars\n\n"
-            f"Полная обработка PDF: {PRICE} Stars",
-            reply_markup=payment_keyboard(user_id))
+            f"🔍 Превью первых {PREVIEW_PAGES} страниц готово!\n\n"
+            f"Для полной версии нужно {PRICE} Stars\n"
+            f"Ваш баланс: {balance} Stars",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton(f"⭐ Купить полную версию ({PRICE} Stars)", callback_data="buy_full")],
+                [InlineKeyboardButton("💎 Пополнить баланс (+100 Stars)", callback_data="add_stars")],
+                [InlineKeyboardButton("🔄 Обработать другой файл", callback_data="start")]
+            ])
+        )
 
-    elif query.data == "preview":
-        await query.edit_message_text("⏳ Готовлю превью...")
+    except Exception as e:
+        logger.error(f"Ошибка обработки: {e}")
+        await query.edit_message_text(
+            "❌ Ошибка при обработке файла. Пожалуйста, попробуйте другой файл.",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("🔄 Попробовать снова", callback_data="start")]
+            )
+        )
 
-        try:
-            preview_pdf = await process_pdf_file(
-                context.user_data['pdf'],
-                DEFAULT_SETTINGS,
-                PREVIEW_PAGES
+        async
+
+        def button_handler(update: Update, context: CallbackContext):
+
+            """Обработчик нажатий на кнопки"""
+        query = update.callback_query
+        await query.answer()
+        user_id = query.from_user.id
+
+        if query.data == "start_processing":
+            await start_processing(update, context)
+
+        elif query.data == "settings":
+            await query.edit_message_text(
+                "⚙️ Настройки обработки:",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("🔢 Толщина линий", callback_data="set_thickness")],
+                    [InlineKeyboardButton("🎨 Цвет фона", callback_data="set_bg_color")],
+                    [InlineKeyboardButton("✒️ Цвет текста", callback_data="set_text_color")],
+                    [InlineKeyboardButton("⬅️ Назад", callback_data="back")]
+                ])
             )
 
-            await context.bot.send_document(
-                chat_id=user_id,
-                document=preview_pdf,
-                filename=f"preview_{context.user_data['filename']}"
+        elif query.data == "balance":
+            balance = get_user_balance(user_id)
+            await query.edit_message_text(
+                f"💰 Ваш баланс: {balance} Stars\n\n"
+                f"Полная обработка PDF: {PRICE} Stars",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton(f"⭐ Купить полную версию ({PRICE} Stars)", callback_data="buy_full")],
+                    [InlineKeyboardButton("💎 Пополнить баланс (+100 Stars)", callback_data="add_stars")],
+                    [InlineKeyboardButton("⬅️ Назад", callback_data="back")]
+                ])
             )
 
-            await query.edit_message_text(
-                f"🔍 Превью первых {PREVIEW_PAGES} страниц\n\n"
-                f"Для полной версии нужно {PRICE} Stars",
-                reply_markup=payment_keyboard(user_id))
+        elif query.data == "buy_full":
+            balance = get_user_balance(user_id)
+            if balance >= PRICE:
+                update_user_balance(user_id, -PRICE)
+                await query.edit_message_text("⏳ Обрабатываю полную версию...")
 
-        except Exception as e:
-            logger.error(f"Ошибка превью: {e}")
-            await query.edit_message_text(
-                "❌ Ошибка при создании превью. Попробуйте другой файл.",
-                reply_markup=main_menu_keyboard(user_id))
+                try:
+                    full_pdf = await process_pdf_file(context.user_data['pdf'], DEFAULT_SETTINGS)
+                    await context.bot.send_document(
+                        chat_id=user_id,
+                        document=full_pdf,
+                        filename=f"enhanced_{context.user_data['filename']}"
+                    )
+                    await query.edit_message_text(
+                        f"✅ Готово! Списано {PRICE} Stars\n"
+                        f"💰 Новый баланс: {balance - PRICE} Stars\n\n"
+                        "Напишите /start если понадоблюсь ещё!",
+                        reply_markup=InlineKeyboardMarkup([
+                            [InlineKeyboardButton("🔄 Обработать другой файл", callback_data="start")]
+                        )
+                    )
+                except Exception as e:
+                    logger.error(f"Ошибка обработки: {e}")
+                    await query.edit_message_text(
+                        "❌ Ошибка при обработке файла.",
+                        reply_markup=InlineKeyboardMarkup([
+                            [InlineKeyboardButton("🔄 Попробовать снова", callback_data="start")]
+                        )
+                    )
+                    else:
+                    await query.edit_message_text(
+                        f"❌ Недостаточно Stars. Нужно {PRICE}, у вас {balance}",
+                        reply_markup=InlineKeyboardMarkup([
+                            [InlineKeyboardButton("💎 Пополнить баланс (+100 Stars)", callback_data="add_stars")],
+                            [InlineKeyboardButton("⬅️ Назад", callback_data="back")]
+                        ])
+                    )
 
-    elif query.data == "buy_full":
-        balance = get_user_balance(user_id)
+                    elif query.data == "add_stars":
+                    update_user_balance(user_id, 100)
+                    await query.edit_message_text(
+                        "✅ Баланс пополнен на 100 Stars!",
+                        reply_markup=InlineKeyboardMarkup([
+                            [InlineKeyboardButton("⬅️ Назад", callback_data="back")]
+                        ])
+                    )
 
-        if balance >= PRICE:
-            update_user_balance(user_id, -PRICE)
-            await query.edit_message_text("⏳ Обрабатываю полную версию...")
+                    elif query.data == "back":
+                    await query.edit_message_text(
+                        "Главное меню:",
+                        reply_markup=InlineKeyboardMarkup([
+                            [InlineKeyboardButton("🔄 Обработать файл", callback_data="start_processing")],
+                            [InlineKeyboardButton("💰 Баланс", callback_data="balance")],
+                            [InlineKeyboardButton("🆘 Помощь", callback_data="help")]
+                        ])
+                    )
 
-            try:
-                full_pdf = await process_pdf_file(
-                    context.user_data['pdf'],
-                    DEFAULT_SETTINGS
+                    elif query.data == "help":
+                    await query.edit_message_text(
+                        "ℹ️ Помощь:\n\n"
+                        "1. Отправьте мне PDF файл с рукописным текстом\n"
+                        "2. Нажмите 'Начать обработку'\n"
+                        "3. Получите бесплатное превью первых 5 страниц\n"
+                        "4. Для полной версии потребуются Stars\n\n"
+                        "Советы:\n"
+                        "• Максимальный размер файла: 50 МБ\n"
+                        "• Для больших файлов используйте: https://www.ilovepdf.com/split_pdf\n"
+                        "• Напишите /start чтобы вернуться в главное меню",
+                        reply_markup=InlineKeyboardMarkup([
+                            [InlineKeyboardButton("⬅️ Назад", callback_data="back")]
+                        ])
+                    )
+
+                    elif query.data == "start":
+                    await start(update, context)
+
+                    async
+
+                    def text_handler(update: Update, context: CallbackContext):
+            """Обработчик текстовых сообщений"""
+            text = update.message.text.lower()
+            if text in ['привет', 'start', 'начать', 'меню']:
+                await start(update, context)
+            else:
+                await update.message.reply_text(
+                    "Я понимаю только PDF файлы и команды меню.\n"
+                    "Напишите /start для отображения меню.",
+                    reply_markup=InlineKeyboardMarkup([
+                        [InlineKeyboardButton("/start", callback_data="start")]
+                    ])
                 )
 
-                await context.bot.send_document(
-                    chat_id=user_id,
-                    document=full_pdf,
-                    filename=f"enhanced_{context.user_data['filename']}"
-                )
+        def main():
+            """Запуск бота"""
+            init_db()
+            app = Application.builder().token(TOKEN).build()
 
-                await query.edit_message_text(
-                    f"✅ Готово! Списано {PRICE} Stars\n"
-                    f"💰 Новый баланс: {balance - PRICE} Stars\n\n"
-                    "Напишите /start если понадоблюсь ещё!",
-                    reply_markup=main_menu_keyboard(user_id))
+            # Обработчики команд
+            app.add_handler(CommandHandler("start", start))
 
-            except Exception as e:
-                logger.error(f"Ошибка обработки: {e}")
-                await query.edit_message_text(
-                    "❌ Ошибка при обработке файла. Попробуйте другой файл.",
-                    reply_markup=main_menu_keyboard(user_id))
+            # Обработчики сообщений
+            app.add_handler(MessageHandler(filters.Document.PDF, handle_document))
+            app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_handler))
 
-        else:
-            await query.edit_message_text(
-                f"❌ Недостаточно Stars. Нужно {PRICE}, у вас {balance}",
-                reply_markup=payment_keyboard(user_id))
+            # Обработчики кнопок
+            app.add_handler(CallbackQueryHandler(button_handler))
 
-    elif query.data == "add_stars":
-        update_user_balance(user_id, 100)
-        await query.edit_message_text(
-            "✅ Баланс пополнен на 100 Stars!",
-            reply_markup=payment_keyboard(user_id))
+            # Запуск бота
+            app.run_polling()
 
-    elif query.data.startswith("thickness_"):
-        thickness = int(query.data.split("_")[1])
-        DEFAULT_SETTINGS['thickness'] = thickness
-        await query.edit_message_text(
-            f"🔢 Толщина линий установлена: {thickness}",
-            reply_markup=settings_keyboard())
-
-    elif query.data.startswith(("bg_", "text_")):
-        color_type, color = query.data.split("_")
-        color_map = {
-            'white': (255, 255, 255),
-            'black': (0, 0, 0),
-            'blue': (0, 0, 255),
-            'red': (255, 0, 0)
-        }
-
-        if color_type == "bg":
-            DEFAULT_SETTINGS['bg_color'] = color_map[color]
-            await query.edit_message_text(
-                f"🎨 Цвет фона: {color}",
-                reply_markup=settings_keyboard())
-        else:
-            DEFAULT_SETTINGS['ink_color'] = color_map[color]
-            await query.edit_message_text(
-                f"✒️ Цвет текста: {color}",
-                reply_markup=settings_keyboard())
-
-    elif query.data == "back_to_settings":
-        await query.edit_message_text(
-            "⚙️ Настройки обработки:",
-            reply_markup=settings_keyboard())
-
-    elif query.data == "back_to_main":
-        await query.edit_message_text(
-            "Главное меню:",
-            reply_markup=main_menu_keyboard(user_id))
-
-    elif query.data == "help":
-        await query.edit_message_text(
-            "ℹ️ Помощь:\n\n"
-            "1. Отправьте мне PDF файл с рукописным текстом\n"
-            "2. Получите бесплатное превью первых 5 страниц\n"
-            "3. Для полной версии потребуются Stars\n\n"
-            "Советы:\n"
-            "• Максимальный размер файла: 50 МБ\n"
-            "• Для больших файлов используйте: https://www.ilovepdf.com/split_pdf\n"
-            "• Напишите /start чтобы вернуться в главное меню",
-            reply_markup=main_menu_keyboard(user_id))
-
-
-async def text_handler(update: Update, context: CallbackContext):
-    """Обработчик текстовых сообщений"""
-    text = update.message.text.lower()
-
-    if text in ['привет', 'start', 'начать', 'меню']:
-        await start(update, context)
-    else:
-        await update.message.reply_text(
-            "Я понимаю только PDF файлы и команды меню.\n"
-            "Напишите /start для отображения меню.",
-            reply_markup=main_menu_keyboard(update.effective_user.id))
-
-
-def main():
-    """Запуск бота"""
-    init_db()
-
-    app = Application.builder().token(TOKEN).build()
-
-    # Обработчики команд
-    app.add_handler(CommandHandler("start", start))
-
-    # Обработчики сообщений
-    app.add_handler(MessageHandler(filters.Document.PDF, handle_document))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_handler))
-
-    # Обработчики кнопок
-    app.add_handler(CallbackQueryHandler(button_handler))
-
-    # Запуск бота
-    app.run_polling()
-
-
-if __name__ == "__main__":
-    main()
+        if __name__ == "__main__":
+            main()

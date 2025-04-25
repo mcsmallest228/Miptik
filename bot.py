@@ -18,11 +18,13 @@ from io import BytesIO
 import tempfile
 
 # Настройки
-TOKEN = "YOUR_TELEGRAM_BOT_TOKEN"
+TOKEN = "8013070807:AAFwDMOWX1qI11rPAbADZvaxx_5YahIGr_U"
 DB_NAME = "pdf_bot.db"
-MAX_FILE_SIZE = 50 * 1024 * 1024  # 50 MB
+OUTPUT_FOLDER = "processed_pdfs"
 PREVIEW_PAGES = 5
 PRICE = 100  # Стоимость полной версии в Stars
+STARS_ADD_AMOUNT = 100  # Количество Stars за пополнение
+
 
 # Параметры обработки по умолчанию
 DEFAULT_SETTINGS = {
